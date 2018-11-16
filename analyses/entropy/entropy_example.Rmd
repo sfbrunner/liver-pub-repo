@@ -1,0 +1,99 @@
+---
+title: "entropy_example"
+author: "Simon Brunner"
+date: "8 June 2017"
+output: html_document
+---
+
+# Calculating the "entropy" purity metric of genomic sites using a normal panel
+The "entropy" metric can be used to remove artefactual variant call sites. The rationale is that by chance it is very unlikely to see the same variant in two unrelated samples. In rare cases, such a site might be recurrently mutated in many samples for biological reasons (polymorphisms, driver variants). However, sequencing and mapping artefacts can be site-specific and can have a high level of recurrence. Thus, if we evaluate the recurrence of a mutation within a panel of unrelated samples, we can expect that true variants are non-recurrent and artefactual variants recur in many samples. In this way, the evaluation of variant sites against a normal panel can be a potent filter to remove artefacts.
+
+The "entropy" metric is used in information theory as a means to quantify the "purity" of a signal (https://en.wikipedia.org/wiki/Entropy_(information_theory)). Low entropy (=0) relates to high purity, high entropy corresponds with impure sites. In our case, we expect the entropy to be (close to) 0 for pure sites, because we expect to always see a single base call (the reference base) at a pure site. 
+
+Practically,the entropy calculation is performed using the following steps:
+
+* Definition of a unique set of genomic coordinates for which we care to calculate the entropy metric
+* Generation of count tables for a large number of samples at those genomic coordinates
+* Merging of these count tables into a single table
+* Calculation of the entropy metric
+
+This markdown sheet performs the entropy calculation for a random subset of 100 genomic coordinates at which mutant calls were observed in samples from donor PD36713b using the somatic variant caller CaVeMan. The assumption is that the pileup tables have been generated already - in this case they are in fact provided for the 100 target variants in the `input/pileup` directory. Thus, the first two steps above have been performed and we focus on the merging of pileup tables and the calculation of the entropy metric.
+
+Library loading and function sourcing
+```{r}
+source('../../lib/pileup_helper_functions.R')
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(data.tree)
+```
+
+# Generate normal panel for the target samples
+
+In this step, the pileup tables are merged into a "normal panel". We require the following input objects:
+
+* target_file_tbl: a tibble listing the pileup files to use as the "normal panel", along with their sample names. Must have following columns:
+    * fname: file name (not the entire path to the file, just the name of the file inside the pileup directory.)
+    * sample: sample name
+* target_vars: a table listing all the variants to include. Must have following columns:
+    * coord_id: chrom_pos
+    * mut_id: chrom_pos_ref_alt
+* input_dir: the directory containing the pileup output files
+* output_dir: where to place the generated output file
+
+### Generation of a table of target variants
+```{r}
+# Load all variant calls
+all_vars = tbl_df(fread('input/example_variants.csv'))
+
+# Filter down to variants of interest
+target_donor = 'PD36713b'
+target_vars_all_info = all_vars %>% filter(donor == target_donor)
+
+# Generate coord_id
+target_vars = target_vars_all_info %>%
+  mutate(coord_id = paste(chrom, pos, sep='_')) %>%
+  dplyr::select(coord_id, mut_id)
+```
+
+### Generation of the target_file_tbl
+Important: remove pileup files that generated for the target sample itself.
+```{r}
+# Load the names of all pileup files
+pileup_dir = 'input/pileup'
+pileup_files = list.files(pileup_dir)
+
+target_file_tbl = tibble(fname = pileup_files)
+target_file_tbl$sample = sapply(pileup_files, function(x) {
+  strsplit(x, '[.]')[[1]][1]
+})
+
+# Remove pileup files of the target samples
+target_file_tbl = target_file_tbl %>%
+  filter(!(sample %in% target_vars_all_info$sample))
+```
+
+### Now generate the normal panel
+```{r echo = T, message=FALSE}
+output_dir = 'output'
+normal_tbl = generate_normal_panel(target_file_tbl = target_file_tbl, 
+                                   target_vars = target_vars, # the variants to include
+                                   input_dir = pileup_dir, # that's the directory containing the pileup output files.
+                                   output_dir = output_dir)
+```
+
+# Assign purity metric
+This step simply calculates the actual purity metric using the normal panel.
+```{r}
+purity_tbl = calculate_purity(normal_tbl)
+```
+
+# Assign purity metric back to variant table
+```{r}
+target_vars_with_entropy = target_vars_all_info %>%
+  left_join(purity_tbl %>% dplyr::select(coord_id, entropy), by='coord_id')
+
+target_vars_with_entropy %>% filter(entropy < 0.16)
+```
+37 of 100 tested variants have an entropy smaller than 0.16 - a cutoff that has previously been found to be useful. 
+

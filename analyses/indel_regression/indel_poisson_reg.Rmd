@@ -1,0 +1,129 @@
+---
+title: "indel_poisson_regression"
+author: "Simon Brunner"
+date: "18 September 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(ggplot2)
+library(lme4)
+```
+
+## Load subs and indels from disk
+```{r}
+subs_indels = tbl_df(fread('input/subs_indels.csv'))
+```
+
+## Load GTex data
+```{r}
+gtex = tbl_df(fread('input/GTEx_Analysis_2016-01-15_v7_RNASeQCv1.1.8_gene_median_tpm.gct'))
+gtex = gtex[,c('gene_id', 'Liver')]
+gtex$gene_id = sapply(gtex$gene_id, function(x) {
+  strsplit(x, '[.]')[[1]][1]
+})
+```
+
+# Poisson regression 
+Corrected after meeting on August 7th
+
+### Prepare data for model
+```{r}
+mod_dat = subs_indels %>%
+  mutate(type = ifelse(type=='Sub', 'Sub', 'INDEL')) %>%
+  group_by(gene, ensembl_gene_id, type) %>% summarise(event_count = n()) %>% ungroup() %>%
+  mutate(event_count = ifelse(is.na(event_count), 0, event_count)) %>%
+  inner_join(gtex, by=c('ensembl_gene_id'='gene_id')) %>%
+  rename('gtex'=Liver) %>%
+  spread(key='type', value='event_count', fill=0) %>%
+  mutate(all_mut = INDEL+Sub) %>%
+  filter(all_mut>10) %>%
+  mutate(all_mut = (all_mut))
+mod_dat_log = mod_dat %>% mutate(gtex = log1p(gtex), INDEL=(INDEL), all_mut=log1p(all_mut)) 
+mod_dat_log
+summary(mod_dat_log)
+```
+
+### Run model with entire data
+```{r}
+gex_mod = glm(INDEL ~ gtex + offset(all_mut), data = mod_dat_log, family=poisson(link='log'))
+gex_mod
+summary(gex_mod)
+```
+
+### Fit again without ALB to make sure that ALB is not an observation of undue influence
+```{r}
+gex_mod_non_ALB = glm(INDEL ~ gtex + offset(all_mut), data = mod_dat_log, family=poisson(link='log'), subset=which(mod_dat_log$gene!='ALB'))
+gex_mod_non_ALB
+summary(gex_mod_non_ALB)
+```
+Gene expression variable `gtex` is still significant and coefficient is only slightly smaller than _with_ ALB.
+
+# Plots
+
+### Plot predictions vs real data
+```{r}
+mod_eval = mod_dat_log %>% mutate(pred_val = predict(gex_mod))
+
+mod_eval %>%
+  ggplot(aes(x=INDEL, y=pred_val)) + geom_point(size=0.2) + theme_light() +
+  labs(x='INDEL, log', y='Prediction') +
+  ggsave('output/poisson_reg_predict.png', width=15, height=15, units='cm')
+```
+
+### Plot point range analysis
+In the first step, generate a table of simulated data to evaluate the model with. In this case, the number of mutations per gene is fixed and taken as the mean of the mutation number. A 99% confidence interval is evaluated.
+```{r}
+plt_dat = mod_dat %>%
+  mutate(indel_prop = INDEL/all_mut)  %>% 
+  mutate(mut_level = case_when(
+    all_mut>100 ~ '>100',
+    all_mut>50 ~ '>50',
+    all_mut>20 ~ '>20',
+    all_mut>10 ~ '>10',
+    TRUE ~ '0'
+  )) %>%
+  mutate(mut_level = factor(mut_level, levels=c('0', '10', '>10', '>20', '>50', '>100'), ordered=TRUE))
+
+sim_dat = tibble(gtex_nonlog = mod_dat$gtex, all_mut_nonlog=mean(plt_dat$all_mut)) %>%
+  mutate(gtex = log1p(gtex_nonlog), all_mut = log1p(all_mut_nonlog))
+sim_pred = predict(gex_mod, newdata=sim_dat, se.fit=TRUE, interval='confidence', level=0.99)
+sim_dat$INDEL = sim_pred$fit
+sim_dat$se = sim_pred$se.fit
+sim_dat = sim_dat %>%
+  mutate(indel_prop = INDEL/all_mut,
+         indel_prop_min = (INDEL-se)/all_mut,
+         indel_prop_max = (INDEL+se)/all_mut) %>%
+  filter(gtex_nonlog<100)
+sim_dat
+```
+
+Generate plot
+```{r}
+label_dat = plt_dat %>%
+  mutate(keep = ifelse(gtex>10, 1, ifelse(indel_prop>0.2, 1, 0))) %>%
+  filter(keep == 1) %>%
+  filter(all_mut>20)
+
+plt_dat
+plt_dat %>% 
+  filter(all_mut>10) %>%
+  ggplot(aes(x=gtex, y=indel_prop)) + 
+  theme_light() +
+  geom_point(aes(color=mut_level, fill=mut_level, size=mut_level), alpha=0.5, shape=21, stroke=0) +
+  geom_text(data = label_dat, aes(x=gtex, label = gene), check_overlap = TRUE, size=4) +
+  geom_ribbon(data = sim_dat, aes(x=gtex_nonlog, ymin=indel_prop_min, ymax=indel_prop_max), alpha=0.4) +
+  geom_line(data = sim_dat, aes(x=gtex_nonlog, y=indel_prop), alpha=0.4) +
+  scale_x_log10() +
+  scale_fill_brewer(palette = 'Spectral', direction=-1) +
+  scale_color_brewer(palette = 'Spectral', direction=-1) +
+  labs(x='Expression, log10', y='Proportion of INDELs', fill = 'Num.mut', size= 'Num.mut', color='Num.mut') +
+  ggsave('output/indel_prop_expr.pdf', width=12, height=10, units='cm')
+```
+
+
+

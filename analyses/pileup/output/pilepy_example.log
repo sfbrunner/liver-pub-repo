@@ -1,0 +1,15 @@
+08/29/2018 02:17:22 PM [INFO]: 
+------
+Setting up pileup job 
+------
+
+08/29/2018 02:17:22 PM [INFO]: Created log at path output/pilepy_example.log.
+08/29/2018 02:17:22 PM [INFO]: User-defined arguments:
+08/29/2018 02:17:22 PM [INFO]: Argument bam_file: '/nfs/cancer_ref01/nst_links/live/1666/PD37105b_lo001/PD37105b_lo001.sample.dupmarked.bam'
+08/29/2018 02:17:22 PM [INFO]: Argument bed_regions: 'input/example.bed'
+08/29/2018 02:17:22 PM [INFO]: Argument log_file: 'output/pilepy_example.log'
+08/29/2018 02:17:22 PM [INFO]: Argument max_depth: 8000
+08/29/2018 02:17:22 PM [INFO]: Argument min_mapq: 1
+08/29/2018 02:17:22 PM [INFO]: Argument output_file: 'output/pilepy_example.csv'
+08/29/2018 02:17:22 PM [INFO]: Running pileup.
+08/29/2018 02:17:29 PM [INFO]: Pileup complete, storing output to disk at output/pilepy_example.csv

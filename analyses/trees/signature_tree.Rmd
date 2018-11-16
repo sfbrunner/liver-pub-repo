@@ -1,0 +1,63 @@
+---
+title: "process_caveman_tbl"
+author: "Simon Brunner"
+date: "8 June 2017"
+output: html_document
+---
+
+```{r}
+source('../../lib/phylogeny_functions.R')
+source('../../lib/LCM_analysis_helper_functions.R')
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(data.tree)
+library(ape)
+library(stringr)
+library(RColorBrewer)
+```
+
+## Read tree
+Tree needs to be in Ape format.
+```{r}
+tr = readRDS('input/phylo_PD36713b.dat')
+```
+
+## Load signature information
+The function "load_sig_tables" processes output from HDP into tables with signature exposures, signature colors (in alignment with COSMIC) and plotting order. However, the use of the function is optional. A table of the form hdp_dat$sig_contrib is sufficient to plot a signature tree.
+```{r}
+path_to_exposures = 'input/exposures.csv'
+path_to_decode = 'input/included_sigs.csv'
+donor_id = 'PD36713b'
+hdp_dat = load_sig_tables(path_to_exposures = path_to_exposures, path_to_decode = path_to_decode, donor_id = donor_id, 
+                          max_contrib_thr = 0.1, sig_prefix='sigSBS', prefix_replace = 'sigPCAWG')
+```
+
+Here's hdp_dat$sig_contrib - the main table needed for signature tree plotting.
+Important features:
+* column "donor"
+* columns with prefix "sig" that contain signature exposures
+* column "cluster_id", which identifies each branch. The IDs listed here need to be contained in the Ape-formatted tree.
+* One row per cluster_id/branch.
+```{r}
+head(hdp_dat$sig_contrib)
+```
+
+## Generate a signature tree
+```{r}
+pdf('output/sig_tree_example.pdf', width=12, height=8)
+par(xpd=TRUE, mar=c(12.1, 4.1, 4.1, 2.1))
+
+# First draw a simple tree
+draw_nice_tree(tr)
+
+# Then overlay the signature bars
+draw_all_edge_sigs(tr, sig_contrib_tbl = hdp_dat$sig_contrib, sig_cols = hdp_dat$sig_colors, sig_order = hdp_dat$sig_order, lwidth=0.4)
+
+# Finally highlight the nodes
+highlight_tree_nodes(tr, pch=23, bg='red')
+
+dev.off()
+```
+The draw_nice_tree function accepts any arguments that are allowed by plot.phylo. For example you can constrain the x-axis to a set number of mutations as follows:
+`draw_nice_tree(tr, x.lim=c(0,1000))`
